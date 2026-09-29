@@ -19,3 +19,6 @@ library_files/
 
 # Generated for the current project location by create_shortcut.ps1.
 /科研文献管理器.lnk
+
+# 安全审计笔记（含本机密钥落点）：仅本地留存，不公开
+SECURITY_AUDIT.md
