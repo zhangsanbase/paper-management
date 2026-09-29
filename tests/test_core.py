@@ -80,6 +80,38 @@ def test_health_check_endpoint(tmp_path, monkeypatch) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_unknown_api_path_returns_json_404_not_the_spa_fallback(tmp_path, monkeypatch) -> None:
+    """未知 /api 路径必须 404 + JSON，不能落到前端兜底路由返回 200 + HTML。
+
+    返回 HTML 时调用方只会在 response.json() 上抛出难以理解的解析错误，
+    而不是干净的"接口不存在"，接口写错一个字母就会变得很难查。
+    """
+    monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "library.sqlite3")
+    monkeypatch.setattr(app_module, "CONFIG_PATH", tmp_path / "config.json")
+    client = TestClient(create_app())
+
+    for method, path in (
+        ("get", "/api"),
+        ("get", "/api/does-not-exist"),
+        ("get", "/api/deeper/still/missing"),
+        ("post", "/api/does-not-exist"),
+        ("delete", "/api/does-not-exist"),
+    ):
+        response = getattr(client, method)(path)
+        assert response.status_code == 404, f"{method} {path} -> {response.status_code}"
+        assert "text/html" not in response.headers.get("content-type", ""), f"{method} {path} returned HTML"
+        assert response.json()["detail"].startswith("未知接口")
+
+    # 真实接口不受影响
+    assert client.get("/api/health").json() == {"status": "ok"}
+
+    # 前端 SPA 兜底仍然可用（仓库带了构建产物时才成立）
+    if app_module.DIST_DIR.exists():
+        fallback = client.get("/some/spa/route")
+        assert fallback.status_code == 200
+        assert "text/html" in fallback.headers["content-type"]
+
+
 def test_extract_publication_year() -> None:
     assert extract_publication_year("2024-06-01") == "2024"
     assert extract_publication_year("Available online 15 March 2023") == "2023"
