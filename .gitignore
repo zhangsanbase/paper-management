@@ -1,0 +1,21 @@
+.venv/
+node_modules/
+backups/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.claude/
+
+data/*
+!data/.gitkeep
+library_files/
+
+.env
+.env.*
+
+*.log
+*.tmp
+
+# Generated for the current project location by create_shortcut.ps1.
+/科研文献管理器.lnk

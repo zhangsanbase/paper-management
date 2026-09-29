@@ -1,0 +1,9 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+httpx[socks]==0.28.1
+pydantic==2.11.7
+PyMuPDF==1.26.4
+Pillow==11.3.0
+pystray==0.19.5
+pytest==8.4.1
+Send2Trash==2.1.0
