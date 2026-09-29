@@ -258,7 +258,8 @@ setx PAPER_MANAGER_PORT 9000
 ├─ launcher.pyw                托盘启动器
 ├─ prepare_environment.py      环境准备（venv / 依赖 / 前端构建）
 ├─ start.ps1 / stop.ps1        命令行启停
-└─ create_shortcut.ps1         生成桌面快捷方式
+├─ create_shortcut.ps1         生成桌面快捷方式
+└─ LICENSE                     MIT
 ```
 
 **要备份的只有两处**：`library_files/`（PDF 实体）与 `data/library.sqlite3`（记录、标签、分区结果）。`data/config.json` 含明文密钥，备份时注意存放位置（见[隐私与安全](#隐私与安全)）。
@@ -349,7 +350,7 @@ setx PAPER_MANAGER_PORT 9000
 | PDF 阅读器 | `GET /api/pdf-viewer`、`PUT /api/pdf-viewer`、`POST /api/pdf-viewer/select` |
 
 > 交互式文档：服务运行后访问 <http://127.0.0.1:8765/docs>。
-> 注意：未匹配的 `/api/*` 路径目前会落到前端兜底路由并返回 `index.html`（HTTP 200）而不是 404，脚本调用时需自行判断返回内容。
+> 未匹配的 `/api` 路径（包括裸 `/api`）一律返回 **404 + JSON**（`{"detail": "未知接口：..."}`），不会落到前端兜底路由，所以脚本可以放心地按状态码和 JSON 判断成败。
 
 ---
 
@@ -358,6 +359,7 @@ setx PAPER_MANAGER_PORT 9000
 ### 代码结构
 
 - `backend/api/` 按系统状态、文献、标签、分区、文件、设置和前端静态资源组织 HTTP 路由；`backend/app.py` 保留应用初始化和旧调用入口。
+- `backend/api/frontend.py` 除托管前端外，还负责把未匹配的 `/api` 路径挡成 404 + JSON。它必须排在所有真实 API 路由之后注册，否则会盖住真正的接口。
 - `backend/services/papers.py` 负责文献入库、AI 识别和期刊分区查询流程；`backend/db.py` 负责 SQLite 连接、schema 和迁移；文件路径操作在 `backend/file_library.py`。
 - `backend/server_config.py` 是监听地址与端口的唯一来源；`scripts/resolve-port.ps1` 给两个 PowerShell 脚本提供同一份解析逻辑。改端口只需要动环境变量，不用改代码。
 - PDF 阅读器偏好和打开策略在独立的 PDF 阅读器服务中，设置接口与文献打开接口共用它，不依赖 AI 配置或文献数据库结构。
@@ -369,7 +371,7 @@ setx PAPER_MANAGER_PORT 9000
 ### 测试
 
 ```powershell
-& .\.venv\Scripts\python.exe -m pytest        # 98 个用例，约 4 分钟
+& .\.venv\Scripts\python.exe -m pytest        # 99 个用例，约 4 分钟
 pytest                                        # 同上；pytest.ini 已配好收集范围
 & .\.venv\Scripts\python.exe -m pytest -q -p no:warnings   # 关掉第三方告警噪声
 ```
@@ -432,4 +434,4 @@ pwsh scripts/check-secrets.ps1
 
 ## 许可
 
-本仓库暂未附带开源许可证文件。如需他人复用，建议补一份 `LICENSE`（例如 MIT）；在补之前，默认保留所有权利。
+[MIT](LICENSE) © 2026 zhangsanbase。可自由使用、修改、分发，保留版权声明即可。
