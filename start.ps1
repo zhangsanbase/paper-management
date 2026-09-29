@@ -7,8 +7,11 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
-$Url = "http://127.0.0.1:8765"
-$PortInUse = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+. (Join-Path $ProjectRoot "scripts\resolve-port.ps1")
+$Port = Get-PaperManagerPort
+
+$Url = "http://127.0.0.1:" + $Port
+$PortInUse = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if ($PortInUse) {
   Write-Host ("Paper manager is already running. Opening " + $Url)
   Write-Host "To stop it, run:  .\stop.ps1"

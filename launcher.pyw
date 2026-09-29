@@ -16,6 +16,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
+from backend import server_config
 from prepare_environment import ensure_environment as prepare_environment
 
 
@@ -27,9 +28,12 @@ SERVER_LOG = LOG_DIR / "server.log"
 VENV_DIR = ROOT / ".venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 VENV_PYTHONW = VENV_DIR / "Scripts" / "pythonw.exe"
-URL = "http://127.0.0.1:8765"
+# 端口在 main() 里按 PAPER_MANAGER_PORT 解析后回填这三个变量。所有使用点
+# （read_health / port_is_open / query_port_processes / open_app_url）都在
+# main() 之后才被调用，所以直接读模块级变量就能拿到最新值。
+PORT = server_config.DEFAULT_PORT
+URL = server_config.server_url(PORT)
 HEALTH_URL = f"{URL}/api/health"
-PORT = 8765
 MUTEX_NAME = "Local\\PaperManagerTrayLauncher"
 
 
@@ -232,7 +236,7 @@ class PaperManagerTray:
         if read_health():
             open_app_url()
         elif port_is_open():
-            notify(self.icon, "文献管理器", "8765 端口被占用，但不是当前服务。请查看日志。")
+            notify(self.icon, "文献管理器", f"{PORT} 端口被占用，但不是当前服务。请查看日志。")
         else:
             threading.Thread(target=self.start_service, kwargs={"open_when_ready": True}, daemon=True).start()
 
@@ -264,6 +268,8 @@ class PaperManagerTray:
 
             env = os.environ.copy()
             env["PAPER_MANAGER_SKIP_BROWSER"] = "1"
+            # 显式下传端口：用户没设环境变量时，父进程与子进程也必须用同一个值。
+            env[server_config.PORT_ENV] = str(PORT)
             server_log = SERVER_LOG.open("ab")
             self.server_process = subprocess.Popen(
                 [str(VENV_PYTHON), "-m", "backend.app"],
@@ -321,8 +327,12 @@ class PaperManagerTray:
 
 
 def main() -> None:
+    global PORT, URL, HEALTH_URL
+    PORT = server_config.resolve_port()
+    URL = server_config.server_url(PORT)
+    HEALTH_URL = f"{URL}/api/health"
     setup_logging()
-    logging.info("launcher start, executable=%s", sys.executable)
+    logging.info("launcher start, executable=%s, port=%s", sys.executable, PORT)
     ensure_environment()
     relaunch_inside_venv_if_needed()
     guard = SingleInstanceGuard()

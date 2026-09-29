@@ -7,7 +7,9 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
-$Port = 8765
+. (Join-Path $ProjectRoot "scripts\resolve-port.ps1")
+$Port = Get-PaperManagerPort
+
 $Connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
 if (!$Connections) {
   Write-Host "Paper manager is not running."
@@ -25,7 +27,11 @@ function Get-BackendProcessIds {
   while ($CurrentId -and $CurrentId -ne 0) {
     $Process = Get-CimInstance Win32_Process -Filter "ProcessId=$CurrentId" -ErrorAction SilentlyContinue
     if (!$Process) { break }
-    if ($Process.CommandLine -and $Process.CommandLine -like "*backend.app*") {
+    # Only python interpreters count. Without the name check, any ancestor whose
+    # command line merely mentions "backend.app" gets dragged in and killed -- a
+    # shell running a compound command, editor task or CI runner, for example.
+    $IsPython = $Process.Name -like "python*.exe"
+    if ($IsPython -and $Process.CommandLine -and $Process.CommandLine -like "*backend.app*") {
       $Ids.Add([int]$Process.ProcessId)
       $CurrentId = [int]$Process.ParentProcessId
     } else {

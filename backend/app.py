@@ -24,6 +24,7 @@ from send2trash import send2trash
 from backend import db as db_layer
 from backend import file_library
 from backend import journal_partitions
+from backend import server_config
 from backend import win_focus
 from backend.services import papers as paper_services
 from backend.runtime import ApplicationRuntime
@@ -934,10 +935,11 @@ def open_browser_later(url: str) -> None:
 
 
 def main() -> None:
-    url = "http://127.0.0.1:8765"
+    port = server_config.resolve_port()
+    url = server_config.server_url(port)
     print(f"本地科研文献管理器：{url}")
     open_browser_later(url)
-    uvicorn.run("backend.app:app", host="127.0.0.1", port=8765, reload=False)
+    uvicorn.run("backend.app:app", host=server_config.HOST, port=port, reload=False)
 
 
 if __name__ == "__main__":
