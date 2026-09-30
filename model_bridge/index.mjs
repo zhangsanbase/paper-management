@@ -33,8 +33,10 @@ export function safeMessage(error) {
 	const message = String(error instanceof Error ? error.message : error)
 		.replace(/(https?|socks5?):\/\/[^/\s@]+@/gi, "$1://[已隐藏]@")
 		.replace(/\bBearer\s+[^\s"'<>]+/gi, "Bearer [已隐藏]")
-		.replace(/((?:access|refresh)[_-]?token|api[_-]?key|authorization)\s*[=:]\s*[^\s&"'<>]+/gi, "$1=[已隐藏]")
-		.replace(/\bsk-[A-Za-z0-9_-]{10,}/g, "[已隐藏]");
+		.replace(/\b((?:access|refresh)(?:[_-]?token)?|api[_-]?key|authorization|password|secret|token|code_verifier)(["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,"'<>}\]]+)/gi, "$1$2[已隐藏]")
+		.replace(/([?&](?:code|state)=)[^&\s"'<>]+/gi, "$1[已隐藏]")
+		.replace(/\b(?:sk-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[已隐藏]")
+		.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[已隐藏]");
 	if (message.includes("unsupported_country_region_territory")) {
 		return "ChatGPT 订阅登录未完成：OpenAI 在令牌交换时返回 403（unsupported_country_region_territory）。请检查应用进程的代理设置及网络出口，并确认当前所在地在 OpenAI 官方支持地区；所在地受支持且网络设置正确仍报错时，请联系 OpenAI 支持。";
 	}

@@ -2,7 +2,7 @@
     密钥兜底检查：阻止密钥、个人数据与本地运行文件进入 git。
 
     首次运行会自动把自己安装为本仓库的 pre-commit 钩子（仅对
-    D:\Code\Paper_mangement 生效，不改动全局 git 配置）。
+    当前仓库生效，不改动全局 git 配置）。
     之后每次 git commit 都会自动检查，命中则阻止提交。
 
     手动运行：pwsh scripts/check-secrets.ps1
@@ -64,11 +64,19 @@ if ($files.Count -gt 0) {
 
 if ($contentHits.Count -gt 0) {
     $violations.Add("以下位置疑似包含密钥：")
-    foreach ($hit in $contentHits) { $violations.Add("  $hit") }
+    foreach ($hit in $contentHits) {
+        # Report only the location, so accidental secrets are not copied into logs.
+        if ($hit -match '^([^:]+):(\d+):') {
+            $violations.Add("  $($Matches[1]):$($Matches[2])（内容已隐藏）")
+        }
+        else {
+            $violations.Add("  检测到疑似密钥（内容已隐藏）")
+        }
+    }
 }
 
 # --- 检查 3：确认受保护文件仍被 .gitignore 忽略 ------------------------------
-foreach ($probe in @('data/config.json', 'backups/')) {
+foreach ($probe in @('data/config.json', 'data/model_auth.json', 'data/pi_auth_context.json', 'library_files/', 'backups/')) {
     git -C $RepoRoot check-ignore -q -- $probe 2>$null
     if ($LASTEXITCODE -ne 0) {
         $violations.Add("警告：$probe 已不再被 .gitignore 忽略，存在误提交风险。")

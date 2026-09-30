@@ -109,6 +109,19 @@ test("unsupported-region OAuth errors explain the provider rejection in Chinese"
 	assert.match(message, /unsupported_country_region_territory/);
 });
 
+test("error messages redact quoted credentials, callback codes and proxy passwords", () => {
+	const marker = "synthetic-credential-alpha";
+	for (const field of ["access_token", "refresh_token", "access", "refresh", "api_key", "password", "token", "code_verifier"]) {
+		assert.ok(!safeMessage(JSON.stringify({ [field]: marker, error: "upstream failure" })).includes(marker), field);
+		assert.ok(!safeMessage(`${field}='${marker}'`).includes(marker), field);
+		assert.ok(!safeMessage(`${field}=${marker}`).includes(marker), field);
+	}
+	assert.ok(!safeMessage(`Bearer ${marker}`).includes(marker));
+	assert.ok(!safeMessage(`http://user:${marker}@proxy.invalid`).includes(marker));
+	assert.ok(!safeMessage(`http://127.0.0.1/callback?code=${marker}&state=${marker}`).includes(marker));
+	assert.equal(safeMessage("model not found; HTTP 404"), "model not found; HTTP 404");
+});
+
 test("invalid proxy settings return JSONL errors while credential status remains available", { timeout: 10000 }, async (t) => {
 	const directory = await fs.mkdtemp(path.join(os.tmpdir(), "paper-manager-proxy-error-"));
 	t.after(() => fs.rm(directory, { recursive: true, force: true }));

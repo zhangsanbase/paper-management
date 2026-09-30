@@ -50,6 +50,7 @@ from backend.ai import (
     parse_ai_json,
 )
 from backend.pdf_utils import extract_first_page_text
+from backend.redaction import redact_sensitive_text
 from backend.text_utils import (
     METHOD_TAG_BLACKLIST,
     coerce_confidence,
@@ -325,7 +326,7 @@ async def call_configured_ai(
 
 
 def describe_subscription_exception(exc: Exception) -> str:
-    message = str(exc).strip() or type(exc).__name__
+    message = redact_sensitive_text(str(exc).strip() or type(exc).__name__)
     lowered = message.lower()
     if any(marker in lowered for marker in ("timeout", "timed out", "超时")):
         return "订阅模型请求超时，请稍后重试或检查网络。"

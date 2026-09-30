@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from backend.redaction import redact_sensitive_text
+
 
 class AIResponseError(RuntimeError):
     """Raised when the upstream AI response shape or JSON payload is unusable."""
@@ -162,15 +164,19 @@ def describe_ai_exception(prefix: str, exc: Exception) -> str:
         return f"{prefix}：AI 请求超时，请稍后重试或检查模型服务。"
     if isinstance(exc, httpx.HTTPStatusError):
         response = exc.response
-        body = response.text.strip().replace("\n", " ")[:500]
+        authorization = exc.request.headers.get("Authorization", "")
+        body = redact_sensitive_text(
+            response.text.strip().replace("\n", " "),
+            secrets=(authorization, authorization.partition(" ")[2]),
+        )[:500]
         suffix = f"：{body}" if body else ""
         return f"{prefix}：AI 上游返回 HTTP {response.status_code}{suffix}"
     if isinstance(exc, AIResponseError):
-        return f"{prefix}：{exc}"
+        return f"{prefix}：{redact_sensitive_text(exc)}"
     if isinstance(exc, json.JSONDecodeError):
         return f"{prefix}：AI 返回不是合法 JSON：{exc.msg}"
     if "AI API 未配置" in str(exc):
         return f"{prefix}：AI API 未配置，请先填写 Base URL、API Key 和 Model。"
     if "socksio" in str(exc).lower() or "socks support" in str(exc).lower():
         return f"{prefix}：当前网络代理使用 SOCKS，需要安装 httpx[socks] 并重启后端服务。"
-    return f"{prefix}：{exc or '未知错误'}"
+    return f"{prefix}：{redact_sensitive_text(exc or '未知错误')}"
