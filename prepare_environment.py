@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -106,6 +107,52 @@ def frontend_build_needed(root: Path = ROOT) -> bool:
     return read_build_stamp(root) != build_input_hash(root)
 
 
+def _ensure_model_bridge_dependencies(root: Path, *, quiet: bool) -> None:
+    """Install the optional subscription runtime separately from the UI build."""
+    node = shutil.which("node")
+    if node is None:
+        return
+    bridge = root / "model_bridge"
+    package_file = bridge / "node_modules" / "@earendil-works" / "pi-ai" / "package.json"
+    install_stamp = bridge / "node_modules" / ".paper-manager-install.json"
+    try:
+        dependency_hash = hashlib.sha256(
+            (bridge / "package.json").read_bytes() + b"\0" + (bridge / "package-lock.json").read_bytes()
+        ).hexdigest()
+        version_result = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=3, check=True)
+        raw_version = re.sub(r"[^0-9.].*$", "", version_result.stdout.strip().removeprefix("v"))
+        version = tuple(int(value) for value in raw_version.split(".")[:3])
+        if version < (22, 19, 0):
+            if not quiet:
+                print("Subscription login needs Node.js 22.19.0 or later; existing API configurations remain available.", flush=True)
+            return
+        try:
+            installed = json.loads(package_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            installed = {}
+        try:
+            stamp = json.loads(install_stamp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            stamp = {}
+        dependencies_present = all(path.is_file() for path in (
+            bridge / "node_modules" / "@earendil-works" / "pi-ai" / "dist" / "index.js",
+            bridge / "node_modules" / "undici" / "index.js",
+        ))
+        if installed.get("version") == "0.99.1" and dependencies_present and stamp.get("hash") == dependency_hash:
+            return
+        if not quiet:
+            print("Installing the optional pi subscription adapter...", flush=True)
+        _run_checked(
+            [_npm_executable(), "ci", "--prefix", str(bridge), "--no-audit", "--no-fund"],
+            root=root,
+            quiet=quiet,
+        )
+        install_stamp.write_text(json.dumps({"hash": dependency_hash}, indent=2) + "\n", encoding="utf-8")
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as exc:
+        if not quiet:
+            print(f"Subscription login is unavailable: {exc}", flush=True)
+
+
 def ensure_environment(root: Path = ROOT, *, quiet: bool = False) -> None:
     root = root.resolve()
     venv_dir = root / ".venv"
@@ -130,6 +177,8 @@ def ensure_environment(root: Path = ROOT, *, quiet: bool = False) -> None:
             quiet=quiet,
         )
         marker_path.touch()
+
+    _ensure_model_bridge_dependencies(root, quiet=quiet)
 
     # 前端只在确实需要重建时才碰 npm。仓库里已经带上 dist 和匹配的戳记，
     # 所以没装 Node.js 的机器可以完全跳过这一段。

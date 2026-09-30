@@ -41,7 +41,9 @@ async def lookup_paper_partition(
     runtime: ApplicationRuntime,
     paper_id: str,
     journal_name_override: str | None = None,
+    model_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    model_selection = model_selection or runtime.capture_ai_profile()
     with runtime.connect() as conn:
         paper = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
         if not paper:
@@ -61,10 +63,7 @@ async def lookup_paper_partition(
         first_page_text = runtime.extract_first_page_text(path)
         if not first_page_text:
             raise RuntimeError("没有期刊名，且 PDF 首页未提取到可用文本")
-        ai_data = await runtime.call_ai(
-            runtime.read_config(mask_key=False),
-            runtime.build_journal_prompt(file_name, first_page_text),
-        )
+        ai_data = await runtime.call_configured_ai(runtime.build_journal_prompt(file_name, first_page_text), model_selection)
         journal_name = runtime.nullable_str(ai_data.get("journal_name"))
 
     with runtime.connect() as conn:
@@ -98,6 +97,7 @@ async def run_partition_lookup_batch(
     papers: list[dict[str, str]],
     scope: str = "all",
 ) -> None:
+    model_selection = runtime.capture_ai_profile()
     with runtime.PARTITION_BATCH_LOCK:
         runtime.PARTITION_BATCH_STATUS = {
             "status": "running", "scope": scope, "total": len(papers), "processed": 0,
@@ -111,7 +111,7 @@ async def run_partition_lookup_batch(
                 runtime.PARTITION_BATCH_STATUS["status"] = "cancelled"
                 break
         try:
-            result = await runtime.lookup_paper_partition(paper["id"])
+            result = await runtime.lookup_paper_partition(paper["id"], model_selection=model_selection)
             outcome = "matched" if result["matched"] else "unmatched"
             failure = None
         except Exception as exc:  # noqa: BLE001
@@ -134,6 +134,7 @@ async def run_partition_lookup_batch(
 
 
 async def process_paper(runtime: ApplicationRuntime, paper_id: str, rename_after_success: bool = False) -> None:
+    model_selection = runtime.capture_ai_profile()
     with runtime.connect() as conn:
         paper = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
         if not paper:
@@ -152,8 +153,7 @@ async def process_paper(runtime: ApplicationRuntime, paper_id: str, rename_after
             raise RuntimeError("PDF 首页未提取到可用文本，可能是扫描版或首页为空")
         with runtime.connect() as conn:
             tags = runtime.get_topic_tags(conn)
-        config = runtime.read_config(mask_key=False)
-        ai_data = await runtime.call_ai(config, runtime.build_ai_prompt(paper["file_name"], first_page_text, tags))
+        ai_data = await runtime.call_configured_ai(runtime.build_ai_prompt(paper["file_name"], first_page_text, tags), model_selection)
         raw_response = runtime.json.dumps(ai_data, ensure_ascii=False)
         with runtime.connect() as conn:
             if not conn.execute("SELECT 1 FROM papers WHERE id = ?", (paper_id,)).fetchone():
@@ -249,7 +249,7 @@ async def process_paper(runtime: ApplicationRuntime, paper_id: str, rename_after
                 (str(runtime.uuid.uuid4()), paper_id, rename_warning, raw_response[:12000], runtime.now_iso()),
             )
         try:
-            await runtime.lookup_paper_partition(paper_id, journal_name)
+            await runtime.lookup_paper_partition(paper_id, journal_name, model_selection)
         except Exception:  # noqa: BLE001
             # Partition lookup is optional metadata and must not fail the paper import.
             pass

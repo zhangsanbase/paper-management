@@ -81,6 +81,20 @@ export type ApiConfig = {
   model: string;
 };
 
+export type ModelProfile = ApiConfig & {
+  id: string;
+  name: string;
+  kind: "api" | "subscription";
+  provider: string;
+  api_key_configured?: boolean;
+};
+
+export type ModelConfigState = {
+  version: 2;
+  active_profile_id: string | null;
+  profiles: ModelProfile[];
+};
+
 export type PdfViewerState = {
   mode: "system" | "custom";
   executable_path: string | null;
@@ -101,7 +115,7 @@ export type Toast = {
   type: "info" | "success" | "error";
 };
 
-export type SettingsTab = "api" | "tags" | "library" | "partitions" | "pdf_viewer";
+export type SettingsTab = "model_configs" | "tags" | "library" | "partitions" | "pdf_viewer";
 
 export type PartitionBatchScope = "all" | "unchecked";
 
@@ -149,7 +163,7 @@ export type ConflictResolveResult = Paper | { status: string; message?: string }
 export type AppState = {
   papers: Paper[];
   tags: TagItem[];
-  config: ApiConfig;
+  config: ModelConfigState;
   library: LibraryInfo;
   counts: {
     all: number;

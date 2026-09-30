@@ -92,7 +92,7 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
             return {
                 "papers": papers,
                 "tags": tags,
-                "config": runtime.read_config(mask_key=True),
+                "config": runtime.read_model_config_public(mask_key=True),
                 "library": runtime.library_status(),
                 "counts": {
                     "all": conn.execute("SELECT COUNT(*) AS count FROM papers").fetchone()["count"],

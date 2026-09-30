@@ -15,7 +15,6 @@ import {
 import "./styles.css";
 import type {
   AddTagDialog,
-  ApiConfig,
   AppState,
   ConflictResolveResult,
   FileConflict,
@@ -25,6 +24,7 @@ import type {
   PartitionBatchScope,
   PartitionBatchStatus,
   PartitionSuggestion,
+  ModelConfigState,
   RemovePaperDialog,
   SettingsTab,
   SortMode,
@@ -36,6 +36,7 @@ import { api, isFileConflict } from "./api/client";
 import { splitTextList, tagMatchesQuery } from "./utils";
 import { DetailActionRail, DetailPane } from "./components/PaperDetails";
 import { PdfViewerSettings } from "./components/PdfViewerSettings";
+import { ModelConfigSettings } from "./components/ModelConfigSettings";
 
 type ErrorBoundaryState = {
   error: Error | null;
@@ -44,7 +45,7 @@ type ErrorBoundaryState = {
 const emptyState: AppState = {
   papers: [],
   tags: [],
-  config: { base_url: "", api_key: "", model: "" },
+  config: { version: 2, active_profile_id: null, profiles: [] },
   library: { path: "" },
   counts: { all: 0, unclassified: 0, failed: 0, pending_suggestions: 0 }
 };
@@ -111,12 +112,10 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [showConfig, setShowConfig] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("api");
-  const [config, setConfig] = useState<ApiConfig>(emptyState.config);
-  const [savedConfig, setSavedConfig] = useState<ApiConfig>(emptyState.config);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("model_configs");
+  const [config, setConfig] = useState<ModelConfigState>(emptyState.config);
+  const [savedConfig, setSavedConfig] = useState<ModelConfigState>(emptyState.config);
   const configInitialized = useRef(false);
-  const aiTestGeneration = useRef(0);
-  const [aiTestState, setAiTestState] = useState<{ status: "running" | "success" | "error"; message: string } | null>(null);
   const [newTagName, setNewTagName] = useState("");
   const [newTagAliases, setNewTagAliases] = useState("");
   const [topicTagQuery, setTopicTagQuery] = useState("");
@@ -156,6 +155,12 @@ function App() {
     setToast({ text, type });
   }
 
+  function applySavedModelConfig(next: ModelConfigState) {
+    setConfig(next);
+    setSavedConfig(next);
+    setState((current) => ({ ...current, config: next }));
+  }
+
   useEffect(() => {
     if (!toast) return;
     const timeout = toast.type === "error" ? 6000 : 2500;
@@ -189,20 +194,19 @@ function App() {
     return Boolean(tagDraftChanged || newTagName.trim() || newTagAliases.trim());
   }
 
-  function requestCloseSettings(overrides?: { configDraft?: ApiConfig; savedConfig?: ApiConfig }) {
-    const nextSavedConfig = overrides?.savedConfig ?? savedConfig;
-    const nextConfigDraft = overrides?.configDraft ?? config;
+  function requestCloseSettings() {
+    const nextSavedConfig = savedConfig;
+    const nextConfigDraft = config;
     const hasUnsaved = JSON.stringify(nextConfigDraft) !== JSON.stringify(nextSavedConfig) || hasUnsavedTagSettings();
     if (hasUnsaved && !window.confirm("设置中有尚未保存的更改，放弃这些更改并关闭吗？")) return;
     if (hasUnsaved) {
       setConfig(nextSavedConfig);
+      setState((current) => ({ ...current, config: nextSavedConfig }));
       setNewTagName("");
       setNewTagAliases("");
       setEditingTag(null);
       setTagDraft({ name: "", aliases: "", description: "" });
     }
-    aiTestGeneration.current += 1;
-    setAiTestState(null);
     setShowConfig(false);
   }
 
@@ -753,42 +757,7 @@ function App() {
     }
   }
 
-  async function saveConfig() {
-    aiTestGeneration.current += 1;
-    setAiTestState(null);
-    try {
-      const next = await api<ApiConfig>("/api/config", { method: "PUT", body: JSON.stringify(config) });
-      setConfig(next);
-      setSavedConfig(next);
-      showToast("AI 配置已保存", "success");
-      requestCloseSettings({ configDraft: next, savedConfig: next });
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "配置保存失败", "error");
-    }
-  }
-
-  async function testConfigConnection() {
-    const generation = ++aiTestGeneration.current;
-    setAiTestState({ status: "running", message: "正在测试连接…" });
-    try {
-      const result = await api<{ status: string; message: string }>("/api/config/test", {
-        method: "POST",
-        body: JSON.stringify(config)
-      });
-      if (generation === aiTestGeneration.current) {
-        setAiTestState({ status: "success", message: result.message });
-      }
-    } catch (error) {
-      if (generation === aiTestGeneration.current) {
-        setAiTestState({
-          status: "error",
-          message: error instanceof Error ? error.message : "AI 连接测试失败"
-        });
-      }
-    }
-  }
-
-  function openSettings(tab: SettingsTab = "api") {
+  function openSettings(tab: SettingsTab = "model_configs") {
     setSettingsTab(tab);
     setShowConfig(true);
     if (tab === "partitions") {
@@ -835,7 +804,7 @@ function App() {
           <h1>科研文献管理器</h1>
         </div>
         <div className="toolbar">
-          <button className="ghost-button" onClick={() => openSettings("api")} title="设置">
+          <button className="ghost-button" onClick={() => openSettings("model_configs")} title="设置">
             <Settings size={18} />
           </button>
           <button className="primary-button" onClick={selectFiles} disabled={busy}>
@@ -1139,7 +1108,7 @@ function App() {
 
       {showConfig && (
         <div className="modal-backdrop">
-          <div className={`modal settings-modal ${settingsTab === "tags" ? "settings-modal-tags" : ""}`}>
+          <div className={`modal settings-modal ${settingsTab === "tags" ? "settings-modal-tags" : settingsTab === "model_configs" ? "settings-modal-model" : ""}`}>
             <div className="modal-title">
               <h2>设置</h2>
               <button className="ghost-button" onClick={() => requestCloseSettings()} aria-label="关闭设置" title="关闭设置">
@@ -1148,8 +1117,8 @@ function App() {
             </div>
             <div className="settings-body">
               <nav className="settings-nav">
-                <button className={settingsTab === "api" ? "settings-tab active" : "settings-tab"} onClick={() => setSettingsTab("api")}>
-                  AI 设置
+                <button className={settingsTab === "model_configs" ? "settings-tab active" : "settings-tab"} onClick={() => setSettingsTab("model_configs")}>
+                  模型配置
                 </button>
                 <button className={settingsTab === "tags" ? "settings-tab active" : "settings-tab"} onClick={() => setSettingsTab("tags")}>
                   标签设置
@@ -1165,63 +1134,13 @@ function App() {
                 </button>
               </nav>
               <section className="settings-panel">
-                {settingsTab === "api" ? (
-                  <>
-                    <label>
-                      Base URL
-                      <input
-                        value={config.base_url}
-                        onChange={(event) => {
-                          aiTestGeneration.current += 1;
-                          setConfig({ ...config, base_url: event.target.value });
-                          setAiTestState(null);
-                        }}
-                        placeholder="https://api.openai.com/v1"
-                      />
-                      <span className="help-text settings-field-help">填写兼容 Chat Completions 的 API 根地址，程序会请求其 /chat/completions 接口。</span>
-                    </label>
-                    <label>
-                      API Key
-                      <input
-                        value={config.api_key}
-                        onChange={(event) => {
-                          aiTestGeneration.current += 1;
-                          setConfig({ ...config, api_key: event.target.value });
-                          setAiTestState(null);
-                        }}
-                        type="password"
-                      />
-                    </label>
-                    <label>
-                      Model
-                      <input
-                        value={config.model}
-                        onChange={(event) => {
-                          aiTestGeneration.current += 1;
-                          setConfig({ ...config, model: event.target.value });
-                          setAiTestState(null);
-                        }}
-                        placeholder="gpt-4.1-mini"
-                      />
-                      <span className="help-text settings-field-help">使用服务商提供的模型标识。</span>
-                    </label>
-                    <div className="settings-api-actions">
-                      <button className="primary-button" onClick={saveConfig}>
-                        <Save size={18} />
-                        保存配置
-                      </button>
-                      <button className="ghost-button" onClick={testConfigConnection} disabled={aiTestState?.status === "running"}>
-                        {aiTestState?.status === "running" ? <Loader2 size={17} className="spin" /> : <RefreshCw size={17} />}
-                        {aiTestState?.status === "running" ? "正在测试…" : "测试连接"}
-                      </button>
-                    </div>
-                    {aiTestState && (
-                      <p className={`settings-inline-status ${aiTestState.status}`} role="status">
-                        {aiTestState.message}
-                      </p>
-                    )}
-                    <p className="help-text settings-field-help">连接测试只在点击时发送一条最小请求，可能产生少量 API 用量；测试不会保存配置。</p>
-                  </>
+                {settingsTab === "model_configs" ? (
+                  <ModelConfigSettings
+                    value={config}
+                    savedValue={savedConfig}
+                    onChange={setConfig}
+                    onSaved={applySavedModelConfig}
+                  />
                 ) : settingsTab === "tags" ? (
                   <>
                     <div className="new-tag settings-new-tag">
@@ -1304,7 +1223,7 @@ function App() {
                 ) : settingsTab === "partitions" ? (
                   <div className="library-settings">
                     <h3>分区补查</h3>
-                    <p className="muted">查询 2025 中科院分区和 2026 新锐分区。缺少期刊名时，会使用当前 AI 配置从 PDF 首页提取；结果保存到论文记录，候选项进入详情页待确认区。</p>
+                    <p className="muted">查询 2025 中科院分区和 2026 新锐分区。缺少期刊名时，会使用当前模型配置从 PDF 首页提取；结果保存到论文记录，候选项进入详情页待确认区。</p>
                     <fieldset className="partition-scope-options" disabled={partitionBatchStatus?.status === "running"}>
                       <legend>查询范围</legend>
                       <label>

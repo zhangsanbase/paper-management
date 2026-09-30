@@ -559,6 +559,7 @@ def test_process_paper_stores_imported_title_translation_and_abstract(tmp_path, 
     monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "library.sqlite3")
     monkeypatch.setattr(app_module, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(app_module, "extract_first_page_text", lambda _path: "Abstract text")
+    app_module.write_config(app_module.ApiConfig(base_url="https://example.invalid/v1", api_key="local-test-key", model="test-model"))
 
     async def fake_call_ai(_config, _messages):
         return {
@@ -602,6 +603,7 @@ def test_process_paper_does_not_overwrite_existing_translation_or_abstract(tmp_p
     monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "library.sqlite3")
     monkeypatch.setattr(app_module, "CONFIG_PATH", tmp_path / "config.json")
     monkeypatch.setattr(app_module, "extract_first_page_text", lambda _path: "Abstract text")
+    app_module.write_config(app_module.ApiConfig(base_url="https://example.invalid/v1", api_key="local-test-key", model="test-model"))
 
     async def fake_call_ai(_config, _messages):
         return {
@@ -1386,7 +1388,7 @@ def test_ai_config_connection_test_uses_masked_saved_key_without_saving(tmp_path
     monkeypatch.setattr(app_module, "DB_PATH", tmp_path / "library.sqlite3")
     monkeypatch.setattr(app_module, "CONFIG_PATH", tmp_path / "config.json")
     client = TestClient(create_app())
-    saved = {"base_url": "https://saved.example", "api_key": "saved-secret", "model": "saved-model"}
+    saved = {"base_url": "https://saved.example", "api_key": "saved-local-key", "model": "saved-model"}
     assert client.put("/api/config", json=saved).status_code == 200
 
     received: dict[str, object] = {}
@@ -1398,14 +1400,15 @@ def test_ai_config_connection_test_uses_masked_saved_key_without_saving(tmp_path
 
     monkeypatch.setattr(app_module, "call_ai", fake_call_ai)
     draft = client.get("/api/config").json()
-    draft.update({"base_url": "https://draft.example", "model": "draft-model"})
-    response = client.post("/api/config/test", json=draft)
+    profile = draft["profiles"][0]
+    profile.update({"base_url": "https://draft.example", "model": "draft-model"})
+    response = client.post("/api/config/test", json={"profile": profile})
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "message": "AI 连接成功。"}
+    assert response.json() == {"status": "ok", "message": "API 模型连接成功。"}
     assert received["config"] == {
         "base_url": "https://draft.example",
-        "api_key": "saved-secret",
+        "api_key": "saved-local-key",
         "model": "draft-model",
     }
     assert app_module.read_config(mask_key=False) == saved
@@ -1434,7 +1437,7 @@ def test_partition_batch_supports_unchecked_scope_and_legacy_full_scope(tmp_path
 
     looked_up: list[str] = []
 
-    async def fake_lookup(paper_id):
+    async def fake_lookup(paper_id, **_kwargs):
         looked_up.append(paper_id)
         return {"matched": True}
 
@@ -1477,7 +1480,7 @@ def test_partition_batch_collects_failure_details_and_stops_after_current_paper(
 
     looked_up: list[str] = []
 
-    async def fake_lookup(paper_id):
+    async def fake_lookup(paper_id, **_kwargs):
         looked_up.append(paper_id)
         if paper_id == "p1":
             raise RuntimeError("temporary provider error")

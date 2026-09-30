@@ -73,18 +73,20 @@
 | 组件 | 版本 | 实测 | 说明 |
 |---|---|---|---|
 | Python | 3.10 及以上 | 3.13.5 | `requirements.txt` 已锁定全部依赖版本，**唯一必需项** |
-| Node.js / npm | `^20.19` 或 `>=22.12` | 24.15.0 / npm 11.12.1 | **可选**：只在需要重新构建前端时才会用到 |
+| Node.js / npm | Vite 构建需 `^20.19` 或 `>=22.12`；订阅接入需 `>=22.19.0` | 24.15.0 / npm 11.12.1 | **可选**：前端产物有效时，API 与本地文献功能无需 Node；订阅登录和调用需要 Node 22.19.0+ |
 | 操作系统 | Windows 10 / 11 | — | 托盘启动器、快捷方式、PowerShell 脚本、原生文件选择器均为 Windows 专用 |
 | 网络 | 仅调用 AI 与分区查询时需要 | — | 其余功能完全离线 |
 
-> **只有 Python 是必需的。** 仓库里已经带了构建好的前端 `frontend/dist`，以及一份记录"这份 dist 由哪一版源码构建"的戳记 `frontend/.build-stamp`。每次启动时程序会拿当前构建输入（`src/`、`index.html`、`package.json`、`package-lock.json`、`vite.config.ts`、`tsconfig.json`）的内容哈希去比对戳记：
+> **Python 是文献管理和 API 接入的必需项。** 仓库里已经带了构建好的前端 `frontend/dist`，以及一份记录"这份 dist 由哪一版源码构建"的戳记 `frontend/.build-stamp`。每次启动时程序会拿当前构建输入（`src/`、`index.html`、`package.json`、`package-lock.json`、`vite.config.ts`、`tsconfig.json`）的内容哈希去比对戳记：
 >
-> - **对得上** → 直接用现成的 dist，**完全不碰 npm**。机器上没装 Node.js 也能正常跑。
+> - **对得上** → 直接用现成的 dist，不为前端构建运行 npm。机器上没装 Node.js 也能使用本地文献和 API 接入。
 > - **对不上**（你改了前端源码）→ 这时才需要 Node.js：自动 `npm install`、`npm run build`，构建完更新戳记。
 >
 > 判断依据是**文件内容**而不是修改时间，所以 `git clone` / 换机器 / 重新检出都不会误判。行尾被 `core.autocrlf` 转成 CRLF 也不影响（哈希前会先统一成 LF）。
 >
 > ⚠️ **`frontend/.build-stamp` 必须和 `frontend/dist` 一起提交。** 少了它，别人克隆后会被判定为"来源不明、需要重建"，从而又回过头去要 Node.js。
+>
+> **订阅接入另需 Node.js 22.19.0 或更新版本。** 环境准备会在 Node 可用时单独安装 `model_bridge/` 的锁定依赖，即使前端无需重建也会检查；Node 缺失、版本过低或安装失败时，API 接入和本地文献操作仍可使用，订阅配置页会显示原因。
 >
 > **macOS / Linux** 可以运行后端（`python -m backend.app`），但 `start.ps1` / `stop.ps1` / `create_shortcut.ps1` / `launch_tray.vbs` / 托盘启动器都不可用，需要手动建虚拟环境并自行构建前端，做法见下方「方式三：完全手动」。
 
@@ -174,7 +176,7 @@ Vite 已把 `/api` 代理到 `127.0.0.1:8765`，后端 CORS 也放行了 `5173`�
 ## 首次使用
 
 1. 浏览器打开 <http://127.0.0.1:8765>（首次会新建 `data/library.sqlite3`、创建 `library_files/`，并从 `assets/partition_tables/*.xlsx` 导入分区表）。
-2. 右上角 **设置 → AI 设置**，填入 `base_url` / `api_key` / `model`，用「测试」确认连通后保存。未配置 API 时 PDF 仍会入库，但状态显示「需要配置」。
+2. 右上角 **设置 → 模型配置**，新增一组 API 配置或订阅配置。先保存，再测试连接并设为当前；订阅接入会先保存基本信息，再按页面提示登录并选择模型。未启用模型时 PDF 仍会入库，但 AI 处理状态显示「需要配置」。
 3. 点「导入 PDF」入库。入库后程序会读首页文本、抽取元数据、生成中文题名与摘要，并把源文件移入 `library_files` 按标题重命名。
 4. 到文献详情页确认 AI 提出的**待确认标签**；确认后才进入正式标签库。
 5. 到 **设置 → 分区补查** 批量补齐期刊分区。
@@ -237,6 +239,7 @@ setx PAPER_MANAGER_PORT 9000
 │  ├─ file_library.py          文件库路径与移动/重命名
 │  ├─ server_config.py         监听地址与端口的唯一来源
 │  └─ runtime.py               路由与服务的依赖边界
+├─ model_bridge/                独立的 pi 订阅适配进程（Node.js）
 ├─ src/                        React + TypeScript 前端源码
 ├─ frontend/
 │  ├─ dist/                    前端构建产物（后端直接托管它）
@@ -247,7 +250,9 @@ setx PAPER_MANAGER_PORT 9000
 ├─ library_files/              ★ 文献文件库（PDF 实体，体积最大）
 ├─ data/                       ★ 运行数据（数据库、配置、日志）
 │  ├─ library.sqlite3          SQLite 数据库
-│  ├─ config.json              AI 配置（含明文 API Key）
+│  ├─ config.json              模型配置集合（API Key 明文保存）
+│  ├─ model_auth.json          订阅 OAuth 凭据（本机保存）
+│  ├─ pi_auth_context.json     ChatGPT 设备 UUID
 │  ├─ pdf_viewer.json          PDF 阅读器偏好
 │  └─ logs/                    launcher.log / server.log
 ├─ tests/                      pytest 用例
@@ -262,7 +267,7 @@ setx PAPER_MANAGER_PORT 9000
 └─ LICENSE                     MIT
 ```
 
-**要备份的只有两处**：`library_files/`（PDF 实体）与 `data/library.sqlite3`（记录、标签、分区结果）。`data/config.json` 含明文密钥，备份时注意存放位置（见[隐私与安全](#隐私与安全)）。
+**文献库备份**至少包括 `library_files/`（PDF 实体）与 `data/library.sqlite3`（记录、标签、分区结果）。配置文件含 API Key 或订阅授权凭据；只有在需要迁移模型配置时才复制 `data/config.json`、`data/model_auth.json` 和 `data/pi_auth_context.json`，并将它们当作敏感文件妥善保管。
 
 `data/`、`library_files/`、`backups/`、`.venv/`、`node_modules/` 均已加入 `.gitignore`，不会进入版本库。
 
@@ -270,25 +275,25 @@ setx PAPER_MANAGER_PORT 9000
 
 ## 配置说明
 
-### AI 配置
+### 模型配置
 
-页面右上角 **设置 → AI 设置**，三项：
+页面右上角 **设置 → 模型配置** 可保存多组配置，并单独选择当前配置。API 接入使用兼容 Chat Completions 的 Base URL、API Key 和手动填写的模型标识；订阅接入首版支持 ChatGPT、Claude 和 GitHub Copilot，通过本机 OAuth 登录后选择该账号可用的模型。订阅授权由锁定版本的 [`@earendil-works/pi-ai@0.99.1`](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#oauth-providers) 适配进程处理，Copilot 模型目录遵循 pi 的账号可用性过滤。
 
-| 字段 | 示例 | 说明 |
-|---|---|---|
-| `base_url` | `https://api.openai.com/v1` | 任意 OpenAI 兼容接口，需带 `/v1` |
-| `api_key` | `sk-...` | 仅保存在本机 `data/config.json` |
-| `model` | `gpt-4o-mini` / `deepseek-chat` | 需支持 JSON 输出，抽取稳定性更依赖模型能力 |
+保存配置不会自动启用。未登录或字段不完整的配置可以先保存，只有准备就绪的配置才能设为当前。测试只发送一个最小 JSON 请求，不会保存正在编辑的模型参数或切换当前项；编辑字段后需要重新测试。所有文献识别、中文题名、摘要生成和期刊提取共用当前配置。
 
-保存后用「测试」按钮验证连通性（对应 `POST /api/config/test`）。配置文件保存于 `data/config.json`；接口返回给前端时 Key 一律以 `********` 掩码。
+配置集合按 `version: 2`、`active_profile_id`、`profiles` 写入 `data/config.json`。首次打开旧版三字段配置时，程序先生成 `config.json.before-model-config-<时间戳>.bak`，完整 API 配置会自动启用，部分填写的配置会保留但不启用，空配置会迁移为空列表。API Key 只在本地配置文件中保存，`GET /api/config` 和 `GET /api/state` 都会按配置 ID 掩码；保存或测试时只会用同一 ID 的已保存密钥补回掩码值。
 
-**AI 只做三件事**：抽取首页元数据、生成中文题名与摘要、在缺少期刊名时从首页文本中提取期刊名。不配置 API 时导入、标签、打开文件等本地功能仍然可用。
+OAuth 凭据单独保存在 `data/model_auth.json`，ChatGPT 所需的设备 UUID 保存在 `data/pi_auth_context.json`，两者都不会从前端接口返回。订阅登录中断或模型不可用时，不会切换到其他配置或读取环境变量中的 API Key。没有模型配置时，导入、标签、打开文件等本地功能仍然可用。
+
+订阅适配进程使用锁定版本的 `undici@8.11.2`，使登录、令牌刷新和模型调用共同遵循代理配置：优先读取 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 中的非空值（同名小写变量优先），未设置代理变量时读取 Windows 已启用的手动系统代理。支持 HTTP、HTTPS 和 SOCKS5 代理，以及 `NO_PROXY`；未指定 `NO_PROXY` 时默认绕过本机回环地址。系统的 PAC 自动配置脚本不在此支持范围内。修改代理后需重启应用，确保新进程读取最新设置。
+
+订阅 OAuth 的交互与模型目录能力按 pi 的[官方接入文档](https://github.com/earendil-works/pi/blob/main/packages/ai/README.md#oauth-providers)实现；实际模型请求仍需在设置页用「测试连接」验证。
 
 ### PDF 阅读器
 
 **设置 → PDF 阅读器** 可选系统默认程序，或在 Windows 上指定一个能接收 PDF 文件路径作为启动参数的 `.exe`。选择后立即生效；主文献和 PDF 补充文件共用此设置，其他补充文件仍由系统决定打开软件。macOS 和 Linux 继续使用系统默认程序。
 
-偏好单独保存在 `data/pdf_viewer.json`，不会进入 Git，也不会改动 AI 配置。迁移工程后若原程序路径不存在，打开 PDF 时会回退到系统默认程序，设置页会提示重新选择。
+偏好单独保存在 `data/pdf_viewer.json`，不会进入 Git，也不会改动模型配置。迁移工程后若原程序路径不存在，打开 PDF 时会回退到系统默认程序，设置页会提示重新选择。
 
 ### 期刊分区表
 
@@ -308,7 +313,7 @@ setx PAPER_MANAGER_PORT 9000
 
 **备份建议**：定期复制 `library_files/` 与 `data/library.sqlite3`。`data/library.sqlite3-wal` / `-shm` 是 SQLite 的运行时副产物，复制数据库前先停止服务，或连同 `-wal` 一起复制。
 
-> ⚠️ **不要把项目目录放进 OneDrive / 坚果云 / 百度网盘等云同步目录**，除非你接受 API Key 随目录外传。`data/config.json` 里的密钥是明文存储的，密钥文件随目录走，一次目录外拷就是一次实际外泄。真的需要云同步时，请先吊销并轮换密钥。
+> ⚠️ **不要把项目目录放进 OneDrive / 坚果云 / 百度网盘等云同步目录**，除非你接受 API Key 和订阅凭据随目录外传。`data/config.json` 与 `data/model_auth.json` 都含有本机认证材料；云同步前先退出订阅账号并吊销或轮换相关凭据。
 
 ---
 
@@ -324,7 +329,10 @@ setx PAPER_MANAGER_PORT 9000
 | 网页能打开但界面空白 | `frontend/dist` 缺失或过期 | `python .\prepare_environment.py`，或手动 `npm run build` |
 | 文献显示「缺失」 | 文件在程序外被改名 / 移动 / 删除 | 详情页「重新链接」重新指向 |
 | 打开的 PDF 不是自选阅读器 | `data/pdf_viewer.json` 里记录的路径已失效 | 设置 → PDF 阅读器重新选择 |
-| 文献状态显示「需要配置」 | 未配置 AI 或配置无效 | 设置 → AI 设置，先「测试」再保存 |
+| 订阅配置提示缺少运行环境 | 未安装 Node.js、版本低于 22.19.0 或 pi 依赖未安装 | 安装 Node.js 22.19.0+ 后重新运行 `python .\prepare_environment.py` |
+| 订阅登录失败或模型目录为空 | OAuth 会话失效、账号没有对应订阅权限或模型目录变化 | 在模型配置中重新登录、刷新目录并选择当前可用模型 |
+| ChatGPT 登录在令牌交换时返回 `403 / unsupported_country_region_territory` | OpenAI 拒绝了应用进程的请求，浏览器与应用可能使用不同网络出口 | 检查环境代理和 Windows 系统代理，重启应用后重试；所在地受支持且网络设置正确仍报错时联系 OpenAI 支持 |
+| 文献状态显示「需要配置」 | 没有启用准备就绪的模型配置 | 设置 → 模型配置，完成保存、测试和启用 |
 | 分区查不到结果 | 期刊名缺失，或期刊不在两张分区表内 | 详情页手动填写 / 修正期刊名后再查 |
 | 换目录后快捷方式失效 | 快捷方式记住了旧路径 | 重跑 `.\create_shortcut.ps1` |
 | 关闭浏览器后服务还在跑 | 有意设计，服务独立于页面 | 托盘菜单「停止服务」或 `.\stop.ps1` |
@@ -346,7 +354,8 @@ setx PAPER_MANAGER_PORT 9000
 | 分区 | `POST /api/partitions/lookup-all`、`GET /api/partitions/lookup-all/status`、`POST /api/partitions/lookup-all/cancel`、`POST /api/partition-suggestions/{id}/approve`、`POST /api/partition-suggestions/{id}/reject` |
 | 文件冲突 | `POST /api/file-conflicts/{id}/open-folder`、`POST /api/file-conflicts/{id}/resolve` |
 | 文件库 | `GET /api/library`、`POST /api/library/open`、`POST /api/library/migrate` |
-| AI 配置 | `GET /api/config`、`PUT /api/config`、`POST /api/config/test` |
+| 模型配置 | `GET /api/config`、`PUT /api/config`、`POST /api/config/test`、`POST /api/config/active` |
+| 订阅登录 | `GET /api/model-providers`、`GET /api/model-configs/{id}/models`、`GET/POST/DELETE /api/model-configs/{id}/auth`、登录会话的 `GET/POST/DELETE /api/model-config-sessions/{id}` |
 | PDF 阅读器 | `GET /api/pdf-viewer`、`PUT /api/pdf-viewer`、`POST /api/pdf-viewer/select` |
 
 > 交互式文档：服务运行后访问 <http://127.0.0.1:8765/docs>。
@@ -362,7 +371,7 @@ setx PAPER_MANAGER_PORT 9000
 - `backend/api/frontend.py` 除托管前端外，还负责把未匹配的 `/api` 路径挡成 404 + JSON。它必须排在所有真实 API 路由之后注册，否则会盖住真正的接口。
 - `backend/services/papers.py` 负责文献入库、AI 识别和期刊分区查询流程；`backend/db.py` 负责 SQLite 连接、schema 和迁移；文件路径操作在 `backend/file_library.py`。
 - `backend/server_config.py` 是监听地址与端口的唯一来源；`scripts/resolve-port.ps1` 给两个 PowerShell 脚本提供同一份解析逻辑。改端口只需要动环境变量，不用改代码。
-- PDF 阅读器偏好和打开策略在独立的 PDF 阅读器服务中，设置接口与文献打开接口共用它，不依赖 AI 配置或文献数据库结构。
+- PDF 阅读器偏好和打开策略在独立的 PDF 阅读器服务中，设置接口与文献打开接口共用它，不依赖模型配置或文献数据库结构。
 - `backend/runtime.py` 为路由和服务提供应用依赖边界。当前兼容层仍从 `backend.app` 动态读取配置和可替换函数，后续可逐步把这些依赖改为显式服务接口。
 - `prepare_environment.py` 负责 venv、Python 依赖和前端构建，托盘启动器与 `start.ps1` 共用它。前端是否需要重建由 `build_input_hash()` 的内容哈希 + `frontend/.build-stamp` 判定，**不要退回用文件修改时间判断**：`git clone` 会把 mtime 统一成检出时间，得出的结论与内容无关。
 - `backend/models.py` 和 `src/types.ts` 分别维护前后端数据模型；**API 字段调整时需要同步检查这两处**及对应页面。前端请求封装在 `src/api/client.ts`，文献详情组件在 `src/components/PaperDetails.tsx`。
@@ -407,7 +416,7 @@ pwsh scripts/check-secrets.ps1
 - **服务不出网**：只绑定 `127.0.0.1`，外网与局域网都无法访问；CORS 只放行 `127.0.0.1:5173` 和 `localhost:5173`（开发用）。
 - **密钥不回传**：`GET /api/config` 与 `GET /api/state` 均以掩码形式返回 `********`，密钥不会经 HTTP 接口回传前端。
 - **AI 请求内容**：只有 PDF 文件名、PDF 首页文本和本地已有主题标签名。PDF 文件本身、首页截图、全文都不会上传。
-- **密钥是明文落盘的**：`data/config.json`（以及 `backups/` 下的历史快照副本）明文保存 API Key。这是本机存储的已知残余风险，请靠「不外传目录」来兜底。
+- **认证材料是本机文件**：`data/config.json` 明文保存 API Key，`data/model_auth.json` 保存 OAuth 令牌，迁移备份也可能包含旧 API Key。这些文件均在 Git 忽略的 `data/` 目录中，但复制到云盘、分享或不可信备份前应先评估泄漏风险。
 
 **以下任一情况成立，请立即吊销并轮换 API Key**：
 

@@ -40,10 +40,12 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
         paper_id: str,
         payload: JournalLookupRequest | None = None,
     ) -> dict[str, Any]:
+        selection = runtime.capture_ai_profile()
         try:
             result = await runtime.lookup_paper_partition(
                 paper_id,
                 payload.journal_name if payload else None,
+                selection,
             )
             return result
         except KeyError as exc:
@@ -53,6 +55,7 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
 
     @router.post("/api/papers/{paper_id}/translate-title")
     async def translate_paper_title(paper_id: str) -> dict[str, Any]:
+        selection = runtime.capture_ai_profile()
         with runtime.connect() as conn:
             paper = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
         if not paper:
@@ -60,7 +63,7 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
         if not runtime.nullable_str(paper["title"]):
             raise runtime.HTTPException(status_code=400, detail="缺少原始标题，无法翻译")
         try:
-            ai_data = await runtime.call_ai(runtime.read_config(mask_key=False), runtime.build_title_translation_prompt(paper))
+            ai_data = await runtime.call_configured_ai(runtime.build_title_translation_prompt(paper), selection)
             title_zh = runtime.nullable_str(ai_data.get("title_zh"))
             with runtime.connect() as conn:
                 conn.execute(
@@ -83,6 +86,7 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
 
     @router.post("/api/papers/{paper_id}/generate-abstract")
     async def generate_paper_abstract(paper_id: str) -> dict[str, Any]:
+        selection = runtime.capture_ai_profile()
         with runtime.connect() as conn:
             paper = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
         if not paper:
@@ -94,7 +98,7 @@ def register(app: FastAPI, runtime: ApplicationRuntime) -> None:
         if not first_page_text:
             raise runtime.HTTPException(status_code=400, detail="PDF 首页未提取到可用文本，无法生成摘要")
         try:
-            ai_data = await runtime.call_ai(runtime.read_config(mask_key=False), runtime.build_abstract_prompt(paper, first_page_text))
+            ai_data = await runtime.call_configured_ai(runtime.build_abstract_prompt(paper, first_page_text), selection)
             abstract = runtime.nullable_str(ai_data.get("abstract"))
             with runtime.connect() as conn:
                 conn.execute(

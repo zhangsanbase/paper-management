@@ -11,6 +11,28 @@ class ApiConfig(BaseModel):
     model: str = ""
 
 
+class ModelProfile(BaseModel):
+    id: str
+    name: str
+    kind: Literal["api", "subscription"]
+    provider: str
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    api_key_configured: bool = False
+
+
+class ModelConfigState(BaseModel):
+    version: Literal[2] = 2
+    active_profile_id: str | None = None
+    profiles: list[ModelProfile]
+
+
+class ModelLoginReply(BaseModel):
+    prompt_id: str
+    answer: str
+
+
 class PaperUpdate(BaseModel):
     title: str | None = None
     title_zh: str | None = None

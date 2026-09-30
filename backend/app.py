@@ -25,6 +25,17 @@ from backend import db as db_layer
 from backend import file_library
 from backend import journal_partitions
 from backend import server_config
+from backend.model_configs import (
+    MASKED_API_KEY,
+    get_profile,
+    is_profile_ready,
+    profile_draft_to_api_config,
+    public_config,
+    read_config as load_model_config,
+    save_config as persist_model_config,
+    update_legacy_config,
+)
+from backend.services.pi_bridge import PIModelBridge, runtime_status as pi_runtime_status
 from backend import win_focus
 from backend.services import papers as paper_services
 from backend.runtime import ApplicationRuntime
@@ -54,6 +65,8 @@ from backend.text_utils import (
 from backend.models import (
     ApiConfig,
     AssignTagsRequest,
+    ModelConfigState,
+    ModelProfile,
     FileConflictResolve,
     JournalLookupRequest,
     PartitionLookupBatchRequest,
@@ -69,6 +82,7 @@ DB_PATH = DATA_DIR / "library.sqlite3"
 PARTITION_SOURCE_DIR = ROOT / "assets" / "partition_tables"
 CONFIG_PATH = DATA_DIR / "config.json"
 PDF_VIEWER_CONFIG_PATH = DATA_DIR / "pdf_viewer.json"
+PI_BRIDGE_ROOT = ROOT / "model_bridge"
 DIST_DIR = ROOT / "frontend" / "dist"
 LIBRARY_DIR = ROOT / "library_files"
 # Base directory for portable relative paths stored in the database. Changing the
@@ -77,6 +91,7 @@ PATH_BASE = ROOT
 PATH_MIGRATED_KEY = db_layer.PATH_MIGRATED_KEY
 SCHEMA = db_layer.SCHEMA
 RUNTIME = ApplicationRuntime(sys.modules[__name__])
+_PI_BRIDGES: dict[Path, PIModelBridge] = {}
 
 
 FILE_CONFLICTS: dict[str, dict[str, Any]] = {}
@@ -221,11 +236,112 @@ def rows_to_papers(rows: list[sqlite3.Row], conn: sqlite3.Connection) -> list[di
 
 
 def read_config(mask_key: bool = False) -> dict[str, str]:
-    return db_layer.read_config(CONFIG_PATH, mask_key)
+    current = load_model_config(CONFIG_PATH)
+    config = _resolve_active_ai_config(current)
+    if mask_key and config["api_key"]:
+        config["api_key"] = MASKED_API_KEY
+    return config
 
 
 def write_config(config: ApiConfig) -> None:
-    db_layer.write_config(CONFIG_PATH, DATA_DIR, config.model_dump())
+    update_legacy_config(CONFIG_PATH, CONFIG_PATH.parent, config.model_dump())
+
+
+def read_model_config(mask_key: bool = False) -> dict[str, Any]:
+    data = load_model_config(CONFIG_PATH)
+    return public_config(data, mask_keys=True) if mask_key else data
+
+
+def read_model_config_public(mask_key: bool = True) -> dict[str, Any]:
+    return public_config(read_model_config(), mask_keys=mask_key)
+
+
+def write_model_config(data: dict[str, Any]) -> dict[str, Any]:
+    return persist_model_config(CONFIG_PATH, CONFIG_PATH.parent, data)
+
+
+def _resolve_active_ai_config(data: dict[str, Any]) -> dict[str, str]:
+    profile_id = data.get("active_profile_id")
+    profile = get_profile(data, str(profile_id or ""))
+    if profile is None:
+        return {"base_url": "", "api_key": "", "model": ""}
+    if profile.get("kind") == "api":
+        return profile_draft_to_api_config(profile, data)
+    return {"base_url": "", "api_key": "", "model": ""}
+
+
+def capture_ai_profile() -> dict[str, Any]:
+    data = load_model_config(CONFIG_PATH)
+    profile_id = str(data.get("active_profile_id") or "")
+    profile = get_profile(data, profile_id)
+    selected = dict(profile) if profile else None
+    return {
+        "profile_id": profile_id,
+        "profile": selected,
+        "config": {"profiles": [selected] if selected else []},
+    }
+
+
+def _get_pi_bridge() -> PIModelBridge:
+    data_dir = CONFIG_PATH.parent.resolve()
+    bridge = _PI_BRIDGES.get(data_dir)
+    if bridge is None:
+        bridge = PIModelBridge(PI_BRIDGE_ROOT, data_dir)
+        _PI_BRIDGES[data_dir] = bridge
+    return bridge
+
+
+def get_pi_bridge() -> PIModelBridge:
+    return _get_pi_bridge()
+
+
+async def call_configured_ai(
+    messages: list[dict[str, str]],
+    selection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    selection = selection or capture_ai_profile()
+    profile_id = str(selection.get("profile_id") or "")
+    profile = selection.get("profile")
+    if profile is None:
+        raise RuntimeError("AI API 未配置：请在模型配置中选择并启用一组模型配置。")
+    if profile.get("kind") == "api":
+        return await call_ai(profile_draft_to_api_config(profile, selection["config"]), messages)
+    if not is_profile_ready(profile, CONFIG_PATH.parent / "model_auth.json"):
+        raise RuntimeError("AI API 未配置：当前订阅尚未登录或没有选择模型，请完成订阅授权后重试。")
+    try:
+        result = await _get_pi_bridge().invoke(
+            "models.complete",
+            profile_id=profile_id,
+            provider=profile["provider"],
+            model=profile["model"],
+            messages=messages,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(describe_subscription_exception(exc)) from exc
+    try:
+        return parse_ai_json(str(result.get("content") or ""))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise AIResponseError(f"订阅模型响应不是合法 JSON：{exc}") from exc
+
+
+def describe_subscription_exception(exc: Exception) -> str:
+    message = str(exc).strip() or type(exc).__name__
+    lowered = message.lower()
+    if any(marker in lowered for marker in ("timeout", "timed out", "超时")):
+        return "订阅模型请求超时，请稍后重试或检查网络。"
+    if any(marker in lowered for marker in ("429", "rate limit", "too many requests", "quota", "额度", "限流")):
+        return "订阅额度或请求频率受限，请等待额度恢复后重试。"
+    if any(marker in lowered for marker in ("401", "unauthorized", "authentication", "oauth", "credential", "token expired", "重新登录")):
+        return "订阅授权可能已失效，请重新登录对应服务商后重试。"
+    if any(marker in lowered for marker in ("404", "model not found", "unsupported model", "模型不可用", "not available")):
+        return "此订阅账号暂不可用该模型，请刷新目录并重新选择。"
+    if any(marker in lowered for marker in ("json", "格式错误", "no usable text")):
+        return "订阅模型响应格式错误，请选择能按要求返回 JSON 的模型后重试。"
+    return f"订阅模型调用失败：{message}"
+
+
+async def stop_pi_bridges() -> None:
+    await __import__("asyncio").gather(*(bridge.close_async() for bridge in _PI_BRIDGES.values()))
 
 
 def enable_windows_dpi_awareness() -> None:
@@ -765,8 +881,9 @@ def upsert_paper(path_text: str) -> tuple[str, bool]:
 async def lookup_paper_partition(
     paper_id: str,
     journal_name_override: str | None = None,
+    model_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return await paper_services.lookup_paper_partition(RUNTIME, paper_id, journal_name_override)
+    return await paper_services.lookup_paper_partition(RUNTIME, paper_id, journal_name_override, model_selection)
 
 
 async def run_partition_lookup_batch(papers: list[dict[str, str]], scope: str = "all") -> None:
@@ -907,6 +1024,8 @@ def create_app() -> FastAPI:
 
     for route_module in (system, library, papers, partitions, files, tags, settings, pdf_viewer, frontend):
         route_module.register(app, RUNTIME)
+
+    app.add_event_handler("shutdown", stop_pi_bridges)
 
     return app
 

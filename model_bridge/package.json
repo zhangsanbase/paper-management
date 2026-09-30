@@ -1,0 +1,15 @@
+{
+  "name": "paper-management-model-bridge",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.99.1",
+    "undici": "8.11.2"
+  }
+}
